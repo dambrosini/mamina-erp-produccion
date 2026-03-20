@@ -175,16 +175,16 @@ const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidad
 };
 
 const extractInvoiceData = async (base64Data, mimeType) => {
-  // 🛑 PEGA AQUÍ TU CLAVE SECRETA QUE COPIASTE EN EL PASO 1 (DENTRO DE LAS COMILLAS "")
-  const apiKey = "TU_CLAVE_AQUI"; 
+  // === 1. EL INTERRUPTOR (AQUÍ SÍ VA TU LLAVE REAL) ===
+  const apiKey = "AIzaSyB16ai7DleAY51Uz_eQeys9UmJEsMFZ7Kk"; 
   
-  if (!apiKey || apiKey === "AIzaSyB16ai7DleAY51Uz_eQeys9UmJEsMFZ7Kk" || apiKey === "") {
+  // === 2. LA ALARMA DE SEGURIDAD (Déjala así, con el texto falso) ===
+  if (!apiKey || apiKey === "TU_CLAVE_AQUI" || apiKey === "") {
      alert("⚠️ Sistema: Por favor, coloca tu 'API Key' de Google en el código para encender el escáner.");
      return null;
   }
 
   const payload = {
-
     contents: [{
       role: "user",
       parts: [

@@ -1,0 +1,22 @@
+{
+    "short_name": "Mamina",
+    "name": "Mamina ERP Enterprise",
+    "icons": [
+      {
+        "src": "/logo192.png",
+        "type": "image/png",
+        "sizes": "192x192",
+        "purpose": "any maskable"
+      },
+      {
+        "src": "/logo512.png",
+        "type": "image/png",
+        "sizes": "512x512",
+        "purpose": "any maskable"
+      }
+    ],
+    "start_url": "/",
+    "display": "standalone",
+    "theme_color": "#4A2B29",
+    "background_color": "#FFF9F8"
+  }

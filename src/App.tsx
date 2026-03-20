@@ -11,6 +11,10 @@ import {
   Bot, ScanSearch, CalendarDays, Tags, MapPinned, BarChart3, Navigation, Info, ShieldCheck, UserPlus, Lock, Menu
 } from 'lucide-react';
 
+// === INICIO IMPORTACIÓN DE MAPAS ===
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+// === FIN IMPORTACIÓN DE MAPAS ===
+
 // ==========================================
 // 1. CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE (PRODUCCIÓN)
 // ==========================================
@@ -593,10 +597,50 @@ function DashboardModule({ user }) {
 // MÓDULO LOGÍSTICA Y MAPA
 // ==========================================
 function MapaModule({ user }) {
-   const { data: pedidos, loading } = useFirestoreCollection('pedidos', user, 300);
-   const [ordenSeleccionada, setOrdenSeleccionada] = useState(null);
+  const { data: pedidos, loading } = useFirestoreCollection('pedidos', user, 300);
+  const [ordenSeleccionada, setOrdenSeleccionada] = useState(null);
 
-   if (loading) return <div className="animate-pulse">Cargando inteligencia geoespacial...</div>;
+  // === INICIO MOTOR OSRM (RUTAS INTELIGENTES) ===
+  const [rutaOptima, setRutaOptima] = useState(null);
+  const [calculandoRuta, setCalculandoRuta] = useState(false);
+
+  // Filtramos solo los pedidos con ubicación válida
+  const pedidosConUbicacion = pedidos.filter(p => p.estado !== 'Entregado' && p.estado !== 'Anulado' && p.ubicacion && p.ubicacion.lat && p.ubicacion.lng);
+
+  const calcularRutaOptima = async () => {
+    if (pedidosConUbicacion.length < 2) {
+      alert("Se necesitan al menos 2 entregas pendientes en el mapa para trazar una ruta.");
+      return;
+    }
+    if (pedidosConUbicacion.length > 25) {
+      alert("Para garantizar velocidad, el motor gratuito soporta un máximo de 25 entregas a la vez.");
+      return;
+    }
+
+    setCalculandoRuta(true);
+    try {
+      const coordenadas = pedidosConUbicacion.map(p => `${p.ubicacion.lng},${p.ubicacion.lat}`).join(';');
+      const url = `https://router.project-osrm.org/trip/v1/driving/${coordenadas}?roundtrip=false&source=first&geometries=geojson`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (data.code === 'Ok' && data.trips && data.trips.length > 0) {
+        // OSRM devuelve [Lng, Lat]. Leaflet usa [Lat, Lng].
+        const rutaFormateada = data.trips[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+        setRutaOptima(rutaFormateada);
+      } else {
+        alert("No se pudo calcular una ruta exacta entre estos puntos.");
+      }
+    } catch (error) {
+      console.error("Error conectando a OSRM:", error);
+      alert("Error de red al conectar con el servidor de rutas.");
+    } finally {
+      setCalculandoRuta(false);
+    }
+  };
+  // === FIN MOTOR OSRM ===
+
+  if (loading) return <div className="animate-pulse">Cargando inteligencia geoespacial...</div>;
 
    const pedidosDelivery = pedidos.filter(p => p.tipo === 'Delivery');
    const activos = pedidosDelivery.filter(p => !['Entregado', 'Anulado'].includes(p.estado));
@@ -621,6 +665,16 @@ function MapaModule({ user }) {
                <h3 className="text-xl md:text-2xl font-bold text-[#4A2B29] tracking-tight">Inteligencia de Logística</h3>
                <p className="text-stone-500 text-xs md:text-sm mt-1">Despachos activos y analítica de zonas calientes.</p>
             </div>
+            {/* INICIO BOTÓN DE RUTA */}
+            <button 
+              onClick={calcularRutaOptima} 
+              disabled={calculandoRuta}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white px-4 py-2 rounded-lg shadow-sm flex items-center justify-center gap-2 text-sm font-bold transition-colors w-full md:w-auto mt-4 md:mt-0"
+            >
+              <Navigation size={16} />
+              {calculandoRuta ? 'Trazando...' : 'Calcular Ruta Óptima'}
+            </button>
+            {/* FIN BOTÓN DE RUTA */}
          </div>
 
          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-auto md:h-[600px] mb-6">
@@ -653,12 +707,27 @@ function MapaModule({ user }) {
                                  <p className="font-bold text-[#4A2B29] text-sm">Destino: {ordenSeleccionada.zona}</p>
                                  <p className="text-xs text-stone-600">{ordenSeleccionada.direccionText}</p>
                               </div>
-                              <iframe 
-                                 title="Mapa de Entrega"
-                                 width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight="0" marginWidth="0" 
-                                 className="flex-1 w-full h-full"
-                                 src={`https://maps.google.com/maps?q=${encodeURIComponent(ordenSeleccionada.direccionText + ' Ecuador')}&output=embed`}
-                              ></iframe>
+                              {/* INICIO MAPA NATIVO (REEMPLAZA AL IFRAME) */}
+                              <div className="flex-1 w-full h-full relative z-0">
+                                 <link rel="stylesheet" href="[https://unpkg.com/leaflet@1.9.4/dist/leaflet.css](https://unpkg.com/leaflet@1.9.4/dist/leaflet.css)" />
+                                 <MapContainer 
+                                    center={ordenSeleccionada.ubicacion?.lat ? [ordenSeleccionada.ubicacion.lat, ordenSeleccionada.ubicacion.lng] : [-2.19616, -79.88621]} 
+                                    zoom={14} 
+                                    style={{ height: '100%', width: '100%', zIndex: 0 }}
+                                 >
+                                    <TileLayer
+                                       url="https://{s}[.basemaps.cartocdn.com/light_all/](https://.basemaps.cartocdn.com/light_all/){z}/{x}/{y}{r}.png"
+                                       attribution='&copy; OpenStreetMap &copy; CARTO'
+                                    />
+                                    {ordenSeleccionada.ubicacion?.lat && (
+                                       <Marker position={[ordenSeleccionada.ubicacion.lat, ordenSeleccionada.ubicacion.lng]}>
+                                          <Popup><strong>{ordenSeleccionada.id}</strong><br/>{ordenSeleccionada.direccionText}</Popup>
+                                       </Marker>
+                                    )}
+                                    {rutaOptima && <Polyline positions={rutaOptima} color="#3b82f6" weight={5} dashArray="10, 10" opacity={0.8} />}
+                                 </MapContainer>
+                              </div>
+                              {/* FIN MAPA NATIVO */}
                            </React.Fragment>
                         ) : (
                            <div className="flex-1 flex flex-col items-center justify-center text-stone-400 p-6 text-center">

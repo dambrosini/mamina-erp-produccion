@@ -7,6 +7,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "leaflet": "^1.9.4",
+    "react-leaflet": "^4.2.1",
     "@inlet/react-pixi": "^6.6.5",
     "firebase": "^12.11.0",
     "lucide-react": "^0.577.0",

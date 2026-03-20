@@ -176,7 +176,7 @@ const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidad
 
 const extractInvoiceData = async (base64Data, mimeType) => {
   // === 1. EL INTERRUPTOR (AQUÍ SÍ VA TU LLAVE REAL) ===
-  const apiKey = "AIzaSyAEhDk7XU6sAm-F7KMyBEh0QlAfftTv5I8"; 
+  const apiKey = "AIzaSyDTfkiuxVQXmVhAjrq5BvebX-SMY8zOk7s"; 
   
   // === 2. LA ALARMA DE SEGURIDAD (Déjala así, con el texto falso) ===
   if (!apiKey || apiKey === "TU_CLAVE_AQUI" || apiKey === "") {
@@ -2441,7 +2441,7 @@ function InventarioModule({ user }) {
          </div>
          <label className={`cursor-pointer w-full sm:w-auto px-5 py-3 rounded-xl text-sm font-bold flex justify-center items-center gap-2 shadow-md transition-all ${isScanning ? 'bg-stone-200 text-stone-500' : 'bg-gradient-to-r from-[#DF888A] to-[#C97779] text-white'}`}>
             {isScanning ? <><Zap size={16} className="animate-pulse"/> Analizando...</> : <><ScanSearch size={16} /> Escanear Factura (IA)</>}
-            <input type="file" accept="image/*,.pdf,application/pdf" className="hidden" onChange={handleInvoiceUpload} disabled={isScanning} />
+            <input type="file" accept=".pdf, application/pdf, image/jpeg, image/png, image/jpg, image/*" className="hidden" onChange={handleInvoiceUpload} disabled={isScanning} />
          </label>
       </div>
 

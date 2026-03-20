@@ -176,7 +176,7 @@ const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidad
 
 const extractInvoiceData = async (base64Data, mimeType) => {
   // === 1. EL INTERRUPTOR (AQUÍ SÍ VA TU LLAVE REAL) ===
-  const apiKey = "AIzaSyB16ai7DleAY51Uz_eQeys9UmJEsMFZ7Kk"; 
+  const apiKey = "AIzaSyAEhDk7XU6sAm-F7KMyBEh0QlAfftTv5I8"; 
   
   // === 2. LA ALARMA DE SEGURIDAD (Déjala así, con el texto falso) ===
   if (!apiKey || apiKey === "TU_CLAVE_AQUI" || apiKey === "") {
@@ -222,7 +222,7 @@ const extractInvoiceData = async (base64Data, mimeType) => {
   const delays = [1000, 2000, 4000, 8000, 16000];
   for (let i = 0; i < 5; i++) {
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -2398,6 +2398,14 @@ function InventarioModule({ user }) {
   const handleInvoiceUpload = async (e) => {
     const file = e.target.files[0]; 
     if (!file) return;
+
+    // === ESCUDO PROTECTOR DE RAM (MAX 5MB) ===
+    if (file.size > 5 * 1024 * 1024) {
+       alert("⚠️ El archivo es muy pesado. Sube una foto o PDF que pese máximo 5MB.");
+       e.target.value = null;
+       return;
+    }
+
     setIsScanning(true);
     const reader = new FileReader(); 
     reader.readAsDataURL(file);
@@ -2409,6 +2417,7 @@ function InventarioModule({ user }) {
        finally { setIsScanning(false); e.target.value = null; }
     };
   };
+
 
   const iniciarEdicion = (inv) => {
      setEditandoId(inv._docId);
@@ -2432,7 +2441,7 @@ function InventarioModule({ user }) {
          </div>
          <label className={`cursor-pointer w-full sm:w-auto px-5 py-3 rounded-xl text-sm font-bold flex justify-center items-center gap-2 shadow-md transition-all ${isScanning ? 'bg-stone-200 text-stone-500' : 'bg-gradient-to-r from-[#DF888A] to-[#C97779] text-white'}`}>
             {isScanning ? <><Zap size={16} className="animate-pulse"/> Analizando...</> : <><ScanSearch size={16} /> Escanear Factura (IA)</>}
-            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={handleInvoiceUpload} disabled={isScanning} />
+            <input type="file" accept="image/*,.pdf,application/pdf" className="hidden" onChange={handleInvoiceUpload} disabled={isScanning} />
          </label>
       </div>
 

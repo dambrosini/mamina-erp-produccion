@@ -175,9 +175,16 @@ const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidad
 };
 
 const extractInvoiceData = async (base64Data, mimeType) => {
-  const apiKey = ""; 
+  // 🛑 PEGA AQUÍ TU CLAVE SECRETA QUE COPIASTE EN EL PASO 1 (DENTRO DE LAS COMILLAS "")
+  const apiKey = "TU_CLAVE_AQUI"; 
+  
+  if (!apiKey || apiKey === "AIzaSyB16ai7DleAY51Uz_eQeys9UmJEsMFZ7Kk" || apiKey === "") {
+     alert("⚠️ Sistema: Por favor, coloca tu 'API Key' de Google en el código para encender el escáner.");
+     return null;
+  }
 
   const payload = {
+
     contents: [{
       role: "user",
       parts: [
@@ -2425,7 +2432,7 @@ function InventarioModule({ user }) {
          </div>
          <label className={`cursor-pointer w-full sm:w-auto px-5 py-3 rounded-xl text-sm font-bold flex justify-center items-center gap-2 shadow-md transition-all ${isScanning ? 'bg-stone-200 text-stone-500' : 'bg-gradient-to-r from-[#DF888A] to-[#C97779] text-white'}`}>
             {isScanning ? <><Zap size={16} className="animate-pulse"/> Analizando...</> : <><ScanSearch size={16} /> Escanear Factura (IA)</>}
-            <input type="file" accept="image/*" className="hidden" onChange={handleInvoiceUpload} disabled={isScanning} />
+            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={handleInvoiceUpload} disabled={isScanning} />
          </label>
       </div>
 

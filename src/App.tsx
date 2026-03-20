@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, query, limit, enableIndexedDbPersistence } from 'firebase/firestore';
 import { 
   LayoutDashboard, ShoppingBag, Users, History, 
   Cake, Boxes, MapPin, Receipt, Settings, Plus, Search, 
@@ -28,6 +28,18 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 const rootPath = `produccion/erp`;
+
+// === INICIO MODO OFFLINE ===
+try {
+   enableIndexedDbPersistence(db).catch((err) => {
+     if (err.code == 'failed-precondition') {
+       console.warn("Múltiples pestañas abiertas. El modo offline solo funciona en una.");
+     } else if (err.code == 'unimplemented') {
+       console.warn("El navegador no soporta el modo offline.");
+     }
+   });
+ } catch (e) { console.log(e); }
+ // === FIN MODO OFFLINE ===
 
 // ==========================================
 // 2. DATOS DE SIEMBRA (CON NUEVA COLECCIÓN DE CATEGORÍAS)
@@ -56,20 +68,26 @@ const SEED_DATA = {
 // ==========================================
 // 3. HOOK DE ARQUITECTURA: GESTOR DE COLECCIONES
 // ==========================================
-function useFirestoreCollection(collectionName, user) {
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!user) {
-      setLoading(false);
-      return;
-    }
-
-    const colPath = `${rootPath}/${collectionName}`;
-    const colRef = collection(db, colPath);
-
-    const unsubscribe = onSnapshot(colRef, (snapshot) => {
+function useFirestoreCollection(collectionName, user, maxDocs = null) {
+   const [data, setData] = useState([]);
+   const [loading, setLoading] = useState(true);
+ 
+   useEffect(() => {
+     if (!user) {
+       setLoading(false);
+       return;
+     }
+ 
+     const colPath = `${rootPath}/${collectionName}`;
+     let colRef = collection(db, colPath);
+     
+     // === INICIO PROTECCIÓN OOM (RAM) ===
+     if (maxDocs) {
+       colRef = query(colRef, limit(maxDocs));
+     }
+     // === FIN PROTECCIÓN ===
+ 
+     const unsubscribe = onSnapshot(colRef, (snapshot) => {
       if (snapshot.empty && loading) {
         if (SEED_DATA[collectionName] && SEED_DATA[collectionName].length > 0) {
           SEED_DATA[collectionName].forEach(async (item) => {
@@ -121,6 +139,21 @@ function useFirestoreCollection(collectionName, user) {
 // ==========================================
 // ALGORITMOS DE INTELIGENCIA Y CÁLCULO
 // ==========================================
+// === INICIO HELPER INVENTARIO ===
+const calcularCantidadConvertida = (cantidadReceta, unidadReceta, unidadInventario) => {
+   if (!cantidadReceta) return 0;
+   const uR = String(unidadReceta).toLowerCase();
+   const uI = String(unidadInventario).toLowerCase();
+   let cantidad = parseFloat(cantidadReceta);
+ 
+   if (uI === 'kg' && uR === 'gr') return cantidad / 1000;
+   if (uI === 'gr' && uR === 'kg') return cantidad * 1000;
+   if (uI === 'l' && uR === 'ml') return cantidad / 1000;
+   if (uI === 'ml' && uR === 'l') return cantidad * 1000;
+   return cantidad; 
+ };
+ // === FIN HELPER INVENTARIO ===
+
 const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidadReceta, unidadReceta) => {
   if (!costoTotalLote || !stockLote || !cantidadReceta) return 0;
   const costoBaseUnitario = parseFloat(costoTotalLote) / parseFloat(stockLote);
@@ -290,6 +323,34 @@ export default function App() {
   // Nuevo Estado para Diseño Responsivo Móvil
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+ // === INICIO AUTO-LOGOUT POR INACTIVIDAD ===
+ useEffect(() => {
+   if (!user) return;
+   let timeoutId;
+   
+   const resetTimer = () => {
+     clearTimeout(timeoutId);
+     // Cierra sesión a los 15 minutos (900,000 milisegundos) de inactividad
+     timeoutId = setTimeout(() => {
+        signOut(auth);
+        alert("Sesión cerrada automáticamente por inactividad. Ingresa de nuevo.");
+     }, 900000); 
+   };
+
+   window.addEventListener('mousemove', resetTimer);
+   window.addEventListener('keydown', resetTimer);
+   window.addEventListener('click', resetTimer);
+   resetTimer(); 
+
+   return () => {
+     clearTimeout(timeoutId);
+     window.removeEventListener('mousemove', resetTimer);
+     window.removeEventListener('keydown', resetTimer);
+     window.removeEventListener('click', resetTimer);
+   };
+ }, [user]);
+ // === FIN AUTO-LOGOUT ===
+
   // === INICIO PWA ===
   const [installPrompt, setInstallPrompt] = useState<any>(null);
 
@@ -383,21 +444,30 @@ export default function App() {
         <nav className="flex-1 overflow-y-auto py-6 px-4 custom-scrollbar">
           <p className="text-xs font-bold text-stone-400 mb-4 px-2 tracking-wider uppercase">Navegación</p>
           <ul className="space-y-1">
-            {TABS.map((tab) => (
-              <li key={tab.id}>
-                <button
-                  onClick={() => handleTabChange(tab.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group ${
-                    currentTab === tab.id ? 'bg-[#4A2B29] text-white shadow-md' : 'text-stone-500 hover:bg-stone-50 hover:text-[#4A2B29]'
-                  }`}
-                >
-                  <tab.icon size={18} className={currentTab === tab.id ? 'text-[#DF888A]' : 'text-stone-400 group-hover:text-stone-700'} />
-                  <span className="text-sm font-medium">{tab.name}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
+          {TABS.map((tab) => (
+                  <li key={tab.id}>
+                    <button
+                      onClick={() => handleTabChange(tab.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group ${
+                        currentTab === tab.id ? 'bg-[#4A2B29] text-white shadow-md' : 'text-stone-500 hover:bg-stone-50 hover:text-[#4A2B29]'
+                      }`}
+                    >
+                      <tab.icon size={18} className={currentTab === tab.id ? 'text-[#DF888A]' : 'text-stone-400 group-hover:text-stone-700'} />
+                      <span className="text-sm font-medium">{tab.name}</span>
+                    </button>
+                  </li>
+                ))}
+                
+                {/* INICIO BOTÓN AUDITORÍA (Estilo Nativo) */}
+                <li>
+                  <button onClick={() => {setCurrentTab('auditoria'); setIsMobileMenuOpen(false);}} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group ${currentTab === 'auditoria' ? 'bg-[#4A2B29] text-white shadow-md' : 'text-stone-500 hover:bg-stone-50 hover:text-[#4A2B29]'}`}>
+                    <ShieldCheck size={18} className={currentTab === 'auditoria' ? 'text-[#DF888A]' : 'text-stone-400 group-hover:text-stone-700'} />
+                    <span className="text-sm font-medium">Auditoría</span>
+                  </button>
+                </li>
+                {/* FIN BOTÓN AUDITORÍA */}
+              </ul>
+            </nav>
         
         <div className="p-4 border-t border-stone-100 bg-stone-50">
            <div className="flex items-center justify-between gap-3">
@@ -469,6 +539,7 @@ export default function App() {
           {currentTab === 'inventario' && <InventarioModule user={user} />}
           {currentTab === 'costos' && <CostosModule user={user} />}
           {currentTab === 'accesos' && <AccesosModule user={user} />}
+          {currentTab === 'auditoria' && <AuditoriaModule user={user} />}
         </div>
       </main>
     </div>
@@ -479,7 +550,7 @@ export default function App() {
 // MÓDULO 1: DASHBOARD
 // ==========================================
 function DashboardModule({ user }) {
-  const { data: pedidos, loading } = useFirestoreCollection('pedidos', user);
+  const { data: pedidos, loading } = useFirestoreCollection('pedidos', user, 300);
 
   const pedidosValidos = pedidos.filter(p => p.estado !== 'Anulado');
   const ingresosBrutos = pedidosValidos.reduce((acc, p) => acc + parseFloat(p.total || 0), 0);
@@ -522,7 +593,7 @@ function DashboardModule({ user }) {
 // MÓDULO LOGÍSTICA Y MAPA
 // ==========================================
 function MapaModule({ user }) {
-   const { data: pedidos, loading } = useFirestoreCollection('pedidos', user);
+   const { data: pedidos, loading } = useFirestoreCollection('pedidos', user, 300);
    const [ordenSeleccionada, setOrdenSeleccionada] = useState(null);
 
    if (loading) return <div className="animate-pulse">Cargando inteligencia geoespacial...</div>;
@@ -638,12 +709,58 @@ function MapaModule({ user }) {
 // MÓDULO 2: PEDIDOS Y OPERACIONES
 // ==========================================
 function PedidosModule({ user }) {
-  const { data: pedidos, loading: pLoad, addDocData, updateDocData } = useFirestoreCollection('pedidos', user);
+  const { data: pedidos, loading: pLoad, addDocData, updateDocData } = useFirestoreCollection('pedidos', user, 300);
   const { data: clientes, addDocData: addCliente, updateDocData: updateCliente } = useFirestoreCollection('clientes', user);
   const { data: zonas } = useFirestoreCollection('zonas', user);
   const { data: productos } = useFirestoreCollection('productos', user);
   const { data: atributos_precio } = useFirestoreCollection('atributos_precio', user);
   const { data: categoriasDB } = useFirestoreCollection('categorias_productos', user);
+  const { data: costosRecetas } = useFirestoreCollection('costos', user);
+// === CONEXIÓN A CAJA NEGRA ===
+const { addDocData: addAudit } = useFirestoreCollection('auditoria_logs', user);
+
+
+// === INICIO MOTOR DE INVENTARIO ===
+const { data: inventario, updateDocData: updateInventario } = useFirestoreCollection('inventario', user);
+
+// Factor: -1 (restar al crear), 1 (sumar al anular)
+const procesarInventarioPedido = async (carrito, factor) => {
+   const impactos = {}; // Agrupador Anti-Crash
+   
+   for (const item of carrito) {
+      // 1. Buscar si existe receta para este producto
+      const receta = costosRecetas.find(r => r.producto.toLowerCase() === item.productoInfo?.nombre?.toLowerCase());
+      if (!receta || !receta.ingredientes) continue;
+
+      // 2. Acumular ingredientes
+      for (const ing of receta.ingredientes) {
+         const nombreInsumo = ing.nombre.toLowerCase();
+         const insumoInv = inventario.find(inv => inv.item.toLowerCase() === nombreInsumo);
+         if (!insumoInv) continue; // Si no existe en inventario, ignoramos
+
+         const cantidadConvertida = calcularCantidadConvertida(ing.cantidad, ing.unidad, insumoInv.unidad);
+         
+         if (!impactos[nombreInsumo]) {
+            impactos[nombreInsumo] = { 
+               docId: insumoInv._docId, 
+               stockActual: parseFloat(insumoInv.stock), 
+               cambio: 0 
+            };
+         }
+         impactos[nombreInsumo].cambio += (cantidadConvertida * factor);
+      }
+   }
+
+   // 3. Ejecutar descuentos en Firestore de forma segura
+   for (const key in impactos) {
+      const { docId, stockActual, cambio } = impactos[key];
+      const nuevoStock = Math.max(0, stockActual + cambio); // Evita que baje de 0
+      const nuevoEstado = nuevoStock > 0 ? 'Óptimo' : 'Comprar';
+      await updateInventario(docId, { stock: nuevoStock, estado: nuevoEstado });
+   }
+};
+// === FIN MOTOR DE INVENTARIO ===
+
 
   const [view, setView] = useState('list');
   const [pedidoActual, setPedidoActual] = useState(null);
@@ -659,27 +776,78 @@ function PedidosModule({ user }) {
   );
 
   const handleGuardar = async (ordenData) => {
-    try {
-      if (pedidoActual && pedidoActual._docId) {
-         await updateDocData(pedidoActual._docId, ordenData);
-         showFeedback("Operación actualizada correctamente.", "success");
-      } else {
-         const customHumanId = `ORD-${Math.floor(Math.random() * 10000) + 90000}`;
-         const nuevaOrden = { ...ordenData, id: customHumanId };
-         await addDocData(nuevaOrden, customHumanId);
-         showFeedback("Nueva orden registrada exitosamente.", "success");
-      }
-      setView('list');
-    } catch (error) {
-      console.error(error);
-      showFeedback(String("Error de Sistema: " + (error.message || "Fallo en Firebase.")), "error");
-    }
-  };
+   try {
+     if (pedidoActual && pedidoActual._docId) {
+        // 1. Quita el candado al guardar
+        const payloadActualizacion = { ...ordenData, bloqueadoPor: null };
+        await updateDocData(pedidoActual._docId, payloadActualizacion);
+        
+        // === GATILLO: DEVOLUCIÓN POR ANULACIÓN (Intacto) ===
+        if (pedidoActual.estado !== 'Anulado' && ordenData.estado === 'Anulado') {
+           await procesarInventarioPedido(ordenData.carrito || [], 1);
+        }
+        else if (pedidoActual.estado === 'Anulado' && ordenData.estado !== 'Anulado') {
+           await procesarInventarioPedido(ordenData.carrito || [], -1);
+        }
+        // ==========================================
 
-  const handleEditar = (pedido) => {
-    setPedidoActual(pedido);
-    setView('edit');
-  };
+        // 2. REGISTRO DE AUDITORÍA
+        await addAudit({
+           fechaHora: new Date().toISOString(),
+           usuario: user.email,
+           accion: "MODIFICÓ / ACTUALIZÓ ORDEN",
+           idOrden: pedidoActual.id
+        });
+
+        showFeedback("Operación actualizada correctamente.", "success");
+     } else {
+        const customHumanId = `ORD-${Math.floor(Math.random() * 10000) + 90000}`;
+        // 1. Nace sin candados
+        const nuevaOrden = { ...ordenData, id: customHumanId, bloqueadoPor: null };
+        await addDocData(nuevaOrden, customHumanId);
+        
+        // === GATILLO: DESCUENTO AL CREAR (Intacto) ===
+        if (nuevaOrden.estado !== 'Anulado') {
+           await procesarInventarioPedido(nuevaOrden.carrito || [], -1);
+        }
+        // ===================================
+
+        // 2. REGISTRO DE AUDITORÍA
+        await addAudit({
+           fechaHora: new Date().toISOString(),
+           usuario: user.email,
+           accion: "CREÓ NUEVA ORDEN",
+           idOrden: customHumanId
+        });
+
+        showFeedback("Nueva orden registrada exitosamente.", "success");
+     }
+     setView('list');
+   } catch (error) {
+     console.error(error);
+     showFeedback(String("Error de Sistema: " + (error.message || "Fallo en Firebase.")), "error");
+   }
+ };
+
+  // === INICIO CONCURRENCIA ===
+  const handleEditar = async (pedido) => {
+   if (pedido.bloqueadoPor && pedido.bloqueadoPor !== user.email) {
+      showFeedback(`🔒 Candado: ${pedido.bloqueadoPor} está editando esta orden ahora mismo.`, 'error');
+      return;
+   }
+   await updateDocData(pedido._docId, { bloqueadoPor: user.email });
+   setPedidoActual(pedido);
+   setView('edit');
+ };
+
+ const cancelarEdicion = async () => {
+   if (pedidoActual && pedidoActual._docId) {
+      await updateDocData(pedidoActual._docId, { bloqueadoPor: null });
+   }
+   setPedidoActual(null);
+   setView('list');
+ };
+ // === FIN CONCURRENCIA ===
 
   if (pLoad) return <div className="animate-pulse">Cargando base de datos...</div>;
 
@@ -694,7 +862,7 @@ function PedidosModule({ user }) {
             <Plus size={18} /> Nueva Orden
           </button>
         ) : (
-          <button onClick={() => setView('list')} className="w-full sm:w-auto flex items-center justify-center gap-2 text-stone-500 px-4 py-2 bg-white rounded-lg border border-stone-200 shadow-sm hover:bg-stone-50 transition">
+         <button onClick={cancelarEdicion} className="w-full sm:w-auto flex items-center justify-center gap-2 text-stone-500 px-4 py-2 bg-white rounded-lg border border-stone-200 shadow-sm hover:bg-stone-50 transition">
             <ChevronRight size={18} className="rotate-180" /> Cancelar
           </button>
         )}
@@ -779,6 +947,7 @@ function PedidosModule({ user }) {
            productos={productos}
            diccionarioAtributos={atributos_precio}
            categoriasDB={categoriasDB}
+           costosRecetas={costosRecetas}
            guardarNuevoCliente={addCliente}
            actualizarCliente={updateCliente}
         />
@@ -790,7 +959,8 @@ function PedidosModule({ user }) {
 // ==========================================
 // FORMULARIO DE PEDIDOS
 // ==========================================
-function PedidoFormulario({ onGuardar, initialData, clientes, zonas, productos, diccionarioAtributos, categoriasDB, guardarNuevoCliente, actualizarCliente }) {
+function PedidoFormulario({ onGuardar, initialData, clientes, zonas, productos, diccionarioAtributos, categoriasDB, costosRecetas, guardarNuevoCliente, actualizarCliente }) {
+
   const [busqueda, setBusqueda] = useState(initialData?.cliente || '');
   const [clienteActivo, setClienteActivo] = useState(null);
   const [mostrarDropdown, setMostrarDropdown] = useState(false);
@@ -840,13 +1010,37 @@ function PedidoFormulario({ onGuardar, initialData, clientes, zonas, productos, 
   const prodSeleccionadoInfo = productos?.find(p => (p._docId || p.id) === prodBuilder.idProducto);
 
   const precioSugerido = useMemo(() => {
-     let suma = 0;
-     Object.values(prodBuilder.atributos).forEach(val => {
-        const atr = diccionarioAtributos.find(d => d.nombre.toLowerCase() === String(val).toLowerCase());
-        if (atr && atr.precio) suma += parseFloat(atr.precio);
-     });
-     return suma > 0 ? suma.toFixed(2) : null;
-  }, [prodBuilder.atributos, diccionarioAtributos]);
+   let suma = 0;
+   
+   if (prodSeleccionadoInfo && costosRecetas) {
+      const recetaBase = costosRecetas.find(r => r.producto.toLowerCase() === prodSeleccionadoInfo.nombre.toLowerCase());
+      if (recetaBase && recetaBase.costoTotal) {
+         suma += parseFloat(recetaBase.costoTotal);
+      }
+   }
+
+   // === RESOLUCIÓN DE LA PARADOJA NUTELLA ===
+   // Iteramos 'Object.entries' para conocer la Clase (key) y el Nombre (val)
+   Object.entries(prodBuilder.atributos).forEach(([claseGral, valorSel]) => {
+      if (!valorSel) return; // Si el input está vacío, lo saltamos
+      
+      const atr = diccionarioAtributos.find(d => {
+         // 1. Que el nombre sea igual (Ej. Nutella === Nutella)
+         const coincideNombre = d.nombre.toLowerCase() === String(valorSel).toLowerCase();
+         
+         // 2. Que la clase general sea igual (Ej. Relleno === Relleno). 
+         // Si en el diccionario no le pusimos clase, ignoramos este paso para no romper compatibilidad antigua.
+         const coincideClase = d.categoriaAtr ? d.categoriaAtr.toLowerCase() === String(claseGral).toLowerCase() : true;
+         
+         return coincideNombre && coincideClase;
+      });
+      
+      if (atr && atr.precio) suma += parseFloat(atr.precio);
+   });
+
+   return suma > 0 ? suma.toFixed(2) : null;
+}, [prodBuilder.atributos, diccionarioAtributos, prodSeleccionadoInfo, costosRecetas]);
+
 
   useEffect(() => {
     if (initialData?.cliente && clientes.length > 0) {
@@ -1243,7 +1437,8 @@ function PedidoFormulario({ onGuardar, initialData, clientes, zonas, productos, 
                     <div className="border-t border-[#F2E8E6] pt-3 pb-4 mb-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                        <div className="col-span-1 sm:col-span-2 md:col-span-3 text-[10px] font-bold text-[#DF888A] uppercase tracking-widest flex flex-col sm:flex-row sm:justify-between gap-1">
                           <span>Atributos del Producto</span>
-                          {precioSugerido && <span className="text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded flex items-center gap-1 w-fit"><Sparkles size={10}/>Sug: +${precioSugerido}</span>}
+                          {precioSugerido && <span className="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded shadow-sm border border-emerald-200 flex items-center gap-1 w-fit"><Sparkles size={10}/>Costo Base Sugerido: ${precioSugerido}</span>}
+
                        </div>
                        {prodSeleccionadoInfo.atributos.map(attr => (
                           <div key={attr}><input type="text" placeholder={attr} value={prodBuilder.atributos[attr] || ''} onChange={e => setProdBuilder({...prodBuilder, atributos: {...prodBuilder.atributos, [attr]: e.target.value}})} className="w-full px-3 py-2 md:py-1.5 border border-stone-200 rounded text-sm outline-none focus:ring-1 focus:ring-[#DF888A] bg-white" /></div>
@@ -1446,7 +1641,7 @@ function PedidoFormulario({ onGuardar, initialData, clientes, zonas, productos, 
 // MÓDULO HISTORIAL DE PEDIDOS
 // ==========================================
 function HistorialModule({ user }) {
-  const { data: pedidos, loading } = useFirestoreCollection('pedidos', user);
+  const { data: pedidos, loading } = useFirestoreCollection('pedidos', user, 300);
   const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null);
   
   const pedidosCompletados = pedidos.filter(p => 
@@ -1607,7 +1802,7 @@ function HistorialModule({ user }) {
 // ==========================================
 function ClientesModule({ user }) {
   const { data: clientes, loading: cLoad, addDocData, updateDocData, deleteDocData } = useFirestoreCollection('clientes', user);
-  const { data: pedidos } = useFirestoreCollection('pedidos', user);
+  const { data: pedidos } = useFirestoreCollection('pedidos', user, 300);
   const { data: zonas } = useFirestoreCollection('zonas', user);
 
   const [view, setView] = useState('list');
@@ -1876,21 +2071,31 @@ function ZonasModule({ user }) {
 // MÓDULO PRODUCTOS (CON CATEGORÍAS CRUD)
 // ==========================================
 function ProductosModule({ user }) {
-  const { data: productos, addDocData, deleteDocData } = useFirestoreCollection('productos', user);
-  const { data: atributosPrecio, addDocData: addAtr, deleteDocData: deleteAtr, updateDocData: updateAtr } = useFirestoreCollection('atributos_precio', user);
-  const { data: categoriasDB, addDocData: addCatDB, deleteDocData: deleteCatDB, updateDocData: updateCatDB } = useFirestoreCollection('categorias_productos', user);
-  
-  const [subTab, setSubTab] = useState('categorias'); 
-  
-  const [nuevaCat, setNuevaCat] = useState('');
-  const [editCatId, setEditCatId] = useState(null);
-  const [editCatVal, setEditCatVal] = useState('');
-
-  const [nuevoProd, setNuevoProd] = useState({ categoria: '', nombre: '', atributosStr: '' });
-  
-  const [nuevoAtr, setNuevoAtr] = useState({ nombre: '', precio: '' });
-  const [editAtrId, setEditAtrId] = useState(null);
-  const [editAtrVal, setEditAtrVal] = useState({ nombre: '', precio: '' });
+   // === MODIFICACIÓN: AÑADIDO updateProd Y addCosto ===
+   const { data: productos, addDocData, deleteDocData, updateDocData: updateProd } = useFirestoreCollection('productos', user);
+   // === INICIO MODIFICACIÓN: AÑADIDO costosData y updateCosto ===
+  const { data: costosData, addDocData: addCosto, updateDocData: updateCosto } = useFirestoreCollection('costos', user); 
+  // === FIN MODIFICACIÓN === 
+   const { data: atributosPrecio, addDocData: addAtr, deleteDocData: deleteAtr, updateDocData: updateAtr } = useFirestoreCollection('atributos_precio', user);
+   const { data: categoriasDB, addDocData: addCatDB, deleteDocData: deleteCatDB, updateDocData: updateCatDB } = useFirestoreCollection('categorias_productos', user);
+   
+   const [subTab, setSubTab] = useState('categorias'); 
+   
+   const [nuevaCat, setNuevaCat] = useState('');
+   const [editCatId, setEditCatId] = useState(null);
+   const [editCatVal, setEditCatVal] = useState('');
+ 
+   const [nuevoProd, setNuevoProd] = useState({ categoria: '', nombre: '', atributosStr: '' });
+   
+   // === ESTADOS PARA EDITAR PRODUCTOS ===
+   const [editProdId, setEditProdId] = useState(null);
+   const [editProdVal, setEditProdVal] = useState({ nombre: '', atributosStr: '' });
+ 
+   // === MODIFICACIÓN: AÑADIDO categoriaAtr (Clase General) ===
+   const [nuevoAtr, setNuevoAtr] = useState({ categoriaAtr: '', nombre: '', precio: '' });
+   const [editAtrId, setEditAtrId] = useState(null);
+   const [editAtrVal, setEditAtrVal] = useState({ categoriaAtr: '', nombre: '', precio: '' });
+ 
 
   return (
     <div className="animate-in fade-in duration-300 w-full">
@@ -1953,7 +2158,15 @@ function ProductosModule({ user }) {
               </select>
               <input type="text" value={nuevoProd.nombre} onChange={e=>setNuevoProd({...nuevoProd, nombre: e.target.value})} placeholder="Nombre de Subcategoría..." className="w-full md:flex-1 px-4 py-2 border rounded-lg outline-none font-medium" />
               <input type="text" value={nuevoProd.atributosStr} onChange={e=>setNuevoProd({...nuevoProd, atributosStr: e.target.value})} placeholder="Atributos requeridos (Separados por coma)..." className="w-full md:flex-1 px-4 py-2 border rounded-lg outline-none text-sm" />
-              <button onClick={() => { if(nuevoProd.nombre && nuevoProd.categoria) { addDocData({ categoria: nuevoProd.categoria, nombre: nuevoProd.nombre, atributos: nuevoProd.atributosStr.split(',').map(s=>s.trim()).filter(s=>s) }); setNuevoProd({categoria:'', nombre:'', atributosStr:''}); } }} className="w-full md:w-auto bg-[#4A2B29] text-white px-5 py-2 rounded-lg font-bold flex justify-center items-center gap-2 h-[42px]"><Plus size={16}/> Insertar</button>
+              <button onClick={() => { 
+    if(nuevoProd.nombre && nuevoProd.categoria) { 
+        const prodName = nuevoProd.nombre.trim();
+        addDocData({ categoria: nuevoProd.categoria, nombre: prodName, atributos: nuevoProd.atributosStr.split(',').map(s=>s.trim()).filter(s=>s) }); 
+        // === MAGIA: AUTO-CREA LA RECETA EN COSTOS ===
+        addCosto({ producto: prodName, ingredientes: [], costoTotal: 0 }); 
+        setNuevoProd({categoria:'', nombre:'', atributosStr:''}); 
+    } 
+}} className="w-full md:w-auto bg-[#4A2B29] text-white px-5 py-2 rounded-lg font-bold flex justify-center items-center gap-2 h-[42px]"><Plus size={16}/> Insertar</button>
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
@@ -1964,19 +2177,47 @@ function ProductosModule({ user }) {
                    <div key={cat._docId} className="bg-white p-5 rounded-xl border shadow-sm w-full overflow-hidden">
                      <h4 className="font-bold text-[#4A2B29] text-lg mb-4 border-b pb-2 flex items-center gap-2"><Cake size={16} className="text-[#DF888A] shrink-0"/>{cat.nombre}</h4>
                      <div className="space-y-3">
-                       {prodsInCat.map(prod => (
-                          <div key={prod._docId} className="p-3 bg-stone-50 rounded-lg border flex justify-between items-start">
-                             <div className="pr-2 overflow-hidden">
-                               <p className="font-bold text-sm text-stone-800 truncate">{prod.nombre}</p>
-                               <div className="flex flex-wrap gap-1 mt-2">
-                                  {prod.atributos?.length > 0 ? prod.atributos.map(attr => (
-                                     <span key={attr} className="text-[9px] uppercase tracking-wider font-bold bg-white border px-1.5 py-0.5 rounded break-all">{attr}</span>
-                                  )) : <span className="text-[9px] italic text-stone-400">Sin atributos</span>}
-                               </div>
+                     {prodsInCat.map(prod => (
+                          <div key={prod._docId} className="p-3 bg-stone-50 rounded-lg border flex justify-between items-start group">
+                             <div className="pr-2 overflow-hidden w-full">
+                                {editProdId === prod._docId ? (
+                                   <div className="flex flex-col gap-2 w-full pr-2">
+                                      <input type="text" value={editProdVal.nombre} onChange={e=>setEditProdVal({...editProdVal, nombre: e.target.value})} className="w-full border border-[#DF888A] px-2 py-1 text-sm rounded font-bold outline-none" placeholder="Nombre" />
+                                      <input type="text" value={editProdVal.atributosStr} onChange={e=>setEditProdVal({...editProdVal, atributosStr: e.target.value})} className="w-full border border-[#DF888A] px-2 py-1 text-xs rounded outline-none" placeholder="Ej: Sabor, Relleno..." />
+                                      <button onClick={async () => { 
+    await updateProd(prod._docId, { nombre: editProdVal.nombre, atributos: editProdVal.atributosStr.split(',').map(s=>s.trim()).filter(s=>s) }); 
+    // === INICIO SINCRONIZACIÓN EN CASCADA CON FINANZAS ===
+    if (prod.nombre !== editProdVal.nombre && costosData) {
+        const receta = costosData.find(c => c.producto === prod.nombre);
+        if (receta) {
+            await updateCosto(receta._docId, { producto: editProdVal.nombre });
+        }
+    }
+    // === FIN SINCRONIZACIÓN ===
+    setEditProdId(null); 
+}} className="bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded text-xs font-bold w-fit mt-1"><Save size={14} className="inline mr-1"/>Guardar Edición</button>
+
+                                   </div>
+                                ) : (
+                                   <>
+                                      <p className="font-bold text-sm text-stone-800 truncate">{prod.nombre}</p>
+                                      <div className="flex flex-wrap gap-1 mt-2">
+                                         {prod.atributos?.length > 0 ? prod.atributos.map(attr => (
+                                            <span key={attr} className="text-[9px] uppercase tracking-wider font-bold bg-white border px-1.5 py-0.5 rounded break-all">{attr}</span>
+                                         )) : <span className="text-[9px] italic text-stone-400">Sin atributos</span>}
+                                      </div>
+                                   </>
+                                )}
                              </div>
-                             <button onClick={() => deleteDocData(prod._docId)} className="text-stone-300 hover:text-rose-500 shrink-0 p-1"><Trash2 size={14}/></button>
+                             {editProdId !== prod._docId && (
+                                <div className="flex justify-center gap-2 shrink-0">
+                                   <button onClick={() => { setEditProdId(prod._docId); setEditProdVal({nombre: prod.nombre, atributosStr: prod.atributos?.join(', ') || ''}); }} className="text-stone-300 hover:text-[#DF888A] md:opacity-0 group-hover:opacity-100 p-1"><Edit3 size={14}/></button>
+                                   <button onClick={() => deleteDocData(prod._docId)} className="text-stone-300 hover:text-rose-500 md:opacity-0 group-hover:opacity-100 p-1"><Trash2 size={14}/></button>
+                                </div>
+                             )}
                           </div>
                        ))}
+
                      </div>
                    </div>
                  );
@@ -1989,9 +2230,10 @@ function ProductosModule({ user }) {
       {subTab === 'precios' && (
          <div className="max-w-4xl w-full">
             <div className="bg-[#FFF9F8] p-4 md:p-6 rounded-2xl shadow-sm mb-6 flex flex-col md:flex-row gap-3 border border-[#F2E8E6]">
-               <div className="flex-1 w-full"><label className="text-[10px] font-bold text-[#DF888A] uppercase block mb-1">Nombre Exacto</label><input type="text" value={nuevoAtr.nombre} onChange={e=>setNuevoAtr({...nuevoAtr, nombre: e.target.value})} className="w-full px-4 py-2 border rounded-lg font-medium" /></div>
-               <div className="w-full md:w-32"><label className="text-[10px] font-bold text-[#DF888A] uppercase block mb-1">Costo Extra ($)</label><input type="number" value={nuevoAtr.precio} onChange={e=>setNuevoAtr({...nuevoAtr, precio: e.target.value})} className="w-full px-4 py-2 border rounded-lg font-black text-[#4A2B29]" /></div>
-               <button onClick={() => { if(nuevoAtr.nombre) { addAtr({nombre: nuevoAtr.nombre, precio: parseFloat(nuevoAtr.precio)}); setNuevoAtr({nombre:'', precio:''}); } }} className="w-full md:w-auto bg-[#DF888A] hover:bg-[#D48587] text-white px-5 py-2 rounded-lg font-bold flex justify-center items-center gap-2 h-[42px] mt-auto"><Save size={16}/>Fijar Precio</button>
+               <div className="w-full md:w-1/3"><label className="text-[10px] font-bold text-[#DF888A] uppercase block mb-1">Clase Gral. (Ej: Relleno)</label><input type="text" value={nuevoAtr.categoriaAtr} onChange={e=>setNuevoAtr({...nuevoAtr, categoriaAtr: e.target.value})} placeholder="Clasificación..." className="w-full px-4 py-2 border rounded-lg font-medium outline-none" /></div>
+               <div className="flex-1 w-full"><label className="text-[10px] font-bold text-[#DF888A] uppercase block mb-1">Nombre Exacto (Ej: Nutella)</label><input type="text" value={nuevoAtr.nombre} onChange={e=>setNuevoAtr({...nuevoAtr, nombre: e.target.value})} className="w-full px-4 py-2 border rounded-lg font-medium outline-none" /></div>
+               <div className="w-full md:w-32"><label className="text-[10px] font-bold text-[#DF888A] uppercase block mb-1">Costo Extra ($)</label><input type="number" value={nuevoAtr.precio} onChange={e=>setNuevoAtr({...nuevoAtr, precio: e.target.value})} className="w-full px-4 py-2 border rounded-lg font-black text-[#4A2B29] outline-none" /></div>
+               <button onClick={() => { if(nuevoAtr.nombre) { addAtr({categoriaAtr: nuevoAtr.categoriaAtr.trim(), nombre: nuevoAtr.nombre.trim(), precio: parseFloat(nuevoAtr.precio)}); setNuevoAtr({categoriaAtr:'', nombre:'', precio:''}); } }} className="w-full md:w-auto bg-[#DF888A] hover:bg-[#D48587] text-white px-5 py-2 rounded-lg font-bold flex justify-center items-center gap-2 h-[42px] mt-auto"><Save size={16}/>Fijar Precio</button>
             </div>
             <div className="bg-white rounded-2xl border shadow-sm overflow-hidden w-full">
                <div className="overflow-x-auto w-full">
@@ -2003,22 +2245,30 @@ function ProductosModule({ user }) {
                      {atributosPrecio.length === 0 && <tr><td colSpan="3" className="p-8 text-center text-stone-400">Diccionario vacío.</td></tr>}
                      {atributosPrecio.map(atr => (
                        <tr key={atr._docId} className="border-b hover:bg-stone-50 group">
-                         <td className="p-4 font-bold text-[#4A2B29]">
+                         <td className="p-4">
                             {editAtrId === atr._docId ? (
-                               <input type="text" value={editAtrVal.nombre} onChange={e=>setEditAtrVal({...editAtrVal, nombre: e.target.value})} className="w-full border px-2 py-1.5 text-sm rounded outline-none" />
-                            ) : atr.nombre}
+                               <div className="flex flex-col gap-1">
+                                  <input type="text" value={editAtrVal.categoriaAtr} onChange={e=>setEditAtrVal({...editAtrVal, categoriaAtr: e.target.value})} className="w-full border border-stone-300 px-2 py-1 text-[10px] rounded outline-none text-stone-500 uppercase" placeholder="Clase General (Opcional)" />
+                                  <input type="text" value={editAtrVal.nombre} onChange={e=>setEditAtrVal({...editAtrVal, nombre: e.target.value})} className="w-full border border-stone-300 px-2 py-1.5 text-sm rounded outline-none font-bold" />
+                               </div>
+                            ) : (
+                               <>
+                                  {atr.categoriaAtr && <div className="text-[10px] text-stone-400 uppercase tracking-widest font-bold mb-0.5">{atr.categoriaAtr}</div>}
+                                  <div className="font-bold text-[#4A2B29]">{atr.nombre}</div>
+                               </>
+                            )}
                          </td>
                          <td className="p-4 text-right">
                             {editAtrId === atr._docId ? (
-                               <input type="number" value={editAtrVal.precio} onChange={e=>setEditAtrVal({...editAtrVal, precio: e.target.value})} className="w-20 border px-2 py-1.5 text-sm text-right rounded outline-none font-bold" />
+                               <input type="number" value={editAtrVal.precio} onChange={e=>setEditAtrVal({...editAtrVal, precio: e.target.value})} className="w-20 border border-stone-300 px-2 py-1.5 text-sm text-right rounded outline-none font-bold float-right" />
                             ) : <span className="font-black text-[#DF888A] text-lg">+${parseFloat(atr.precio).toFixed(2)}</span>}
                          </td>
                          <td className="p-4 text-center">
                             {editAtrId === atr._docId ? (
-                               <button onClick={async () => { await updateAtr(atr._docId, {nombre: editAtrVal.nombre, precio: parseFloat(editAtrVal.precio)}); setEditAtrId(null); }} className="text-emerald-600 bg-emerald-100 p-2 rounded-lg mx-auto block"><Save size={16}/></button>
+                               <button onClick={async () => { await updateAtr(atr._docId, {categoriaAtr: editAtrVal.categoriaAtr.trim(), nombre: editAtrVal.nombre.trim(), precio: parseFloat(editAtrVal.precio)}); setEditAtrId(null); }} className="text-emerald-600 bg-emerald-100 p-2 rounded-lg mx-auto block mt-1"><Save size={16}/></button>
                             ) : (
                                <div className="flex justify-center gap-2">
-                                  <button onClick={() => { setEditAtrId(atr._docId); setEditAtrVal({nombre: atr.nombre, precio: atr.precio}); }} className="text-stone-400 md:opacity-0 group-hover:opacity-100"><Edit3 size={16}/></button>
+                                  <button onClick={() => { setEditAtrId(atr._docId); setEditAtrVal({categoriaAtr: atr.categoriaAtr || '', nombre: atr.nombre, precio: atr.precio}); }} className="text-stone-400 hover:text-[#DF888A] md:opacity-0 group-hover:opacity-100"><Edit3 size={16}/></button>
                                   <button onClick={() => deleteAtr(atr._docId)} className="text-stone-400 hover:text-rose-500 md:opacity-0 group-hover:opacity-100"><Trash2 size={16}/></button>
                                </div>
                             )}
@@ -2489,6 +2739,61 @@ function AccesosModule({ user }) {
     </div>
   );
 }
+
+// === INICIO MÓDULO DE AUDITORÍA ===
+function AuditoriaModule({ user }) {
+   // Solo cargamos los últimos 200 logs para no saturar
+   const { data: logs } = useFirestoreCollection('auditoria_logs', user, 200);
+ 
+   // Ordenar los logs del más reciente al más antiguo
+   const logsOrdenados = [...logs].sort((a, b) => new Date(b.fechaHora) - new Date(a.fechaHora));
+ 
+   return (
+     <div className="h-full flex flex-col p-4 md:p-6 bg-stone-50">
+       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+          <div>
+             <h2 className="text-2xl font-black text-[#4A2B29] flex items-center gap-2"><ShieldCheck className="text-[#DF888A]"/> Registro de Auditoría (Logs)</h2>
+             <p className="text-stone-500 text-sm">Caja negra transaccional. Registra las últimas 200 acciones de los usuarios.</p>
+          </div>
+       </div>
+       <div className="flex-1 bg-white rounded-2xl shadow-sm border border-stone-200 overflow-hidden flex flex-col">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-[#FFF9F8] text-[#4A2B29] font-bold uppercase text-[10px] tracking-wider">
+                <tr>
+                  <th className="p-4">Fecha y Hora</th>
+                  <th className="p-4">Usuario</th>
+                  <th className="p-4">Acción Realizada</th>
+                  <th className="p-4">ID Afectado</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-100">
+                {logsOrdenados.map((log) => (
+                  <tr key={log._docId} className="hover:bg-stone-50">
+                    <td className="p-4 whitespace-nowrap font-medium text-stone-600">
+                      {new Date(log.fechaHora).toLocaleString()}
+                    </td>
+                    <td className="p-4 text-emerald-600 font-bold">{log.usuario}</td>
+                    <td className="p-4">
+                       <span className="bg-stone-100 px-2 py-1 rounded text-stone-700 font-medium text-xs">
+                         {log.accion}
+                       </span>
+                    </td>
+                    <td className="p-4 font-mono text-xs text-stone-500">{log.idOrden}</td>
+                  </tr>
+                ))}
+                {logsOrdenados.length === 0 && (
+                  <tr><td colSpan="4" className="p-8 text-center text-stone-400">No hay registros de auditoría aún.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+       </div>
+     </div>
+   );
+ }
+ // === FIN MÓDULO DE AUDITORÍA ===
+ 
 
 // UI HELPER
 function MetricCard({ title, value, trend, isPositive, icon: Icon }) {

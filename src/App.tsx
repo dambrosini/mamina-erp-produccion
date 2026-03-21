@@ -176,7 +176,7 @@ const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidad
 
 const extractInvoiceData = async (base64Data, mimeType) => {
   // 🛑 PEGAR AQUÍ SU LLAVE NUEVA DENTRO DE LAS COMILLAS
-  const apiKey = "AIzaSyCE121wITuCx2o46vqpxtYnFyO31ChniMg"; 
+  const apiKey = "AIzaSyBJJNedZr8ZM8NqhVx-Pwr4Fx02iX-cWu4"; 
   
   if (!apiKey || apiKey === "TU_NUEVA_LLAVE_AQUI" || apiKey === "") {
      throw new Error("Llave API vacía. Actualice la variable apiKey.");
@@ -209,9 +209,9 @@ const extractInvoiceData = async (base64Data, mimeType) => {
      console.log("Auto-descubrimiento en caché, usando default.");
   }
 
-  // === 2. PAYLOAD UNIVERSAL (Anti-Fallos) ===
-  // Hemos blindado las instrucciones para que funcionen con cualquier modelo que Google elija.
-  const promptText = "Eres un experto auditor contable. Analiza esta factura de compras. Extrae la lista de todos los items comprados. Calcula el 'costoTotalLote' incluyendo el IVA si es que aplica. Detecta si la unidad es kg, gr, l, ml o u (unidades). Responde ÚNICAMENTE con un JSON válido con esta estructura estricta: { \"items\": [{ \"item\": \"Nombre del producto\", \"cantidad\": 1, \"costoTotalLote\": 1.50, \"unidad\": \"u\" }] }";
+  // === 2. PAYLOAD UNIVERSAL (Anti-Fallos y Prorrateo IVA) ===
+  // Hemos blindado las instrucciones para forzar el cálculo matemático del IVA por producto.
+  const promptText = "Eres un auditor contable experto. Extrae los items de esta factura. REGLA ESTRICTA DE IMPUESTOS: Busca el Subtotal y el porcentaje de IVA total (ej. 15%) cobrado al final de la factura. DEBES prorratear este IVA matemáticamente y sumarlo al precio individual base de cada producto. El valor en 'costoTotalLote' que devuelvas DEBE ser el costo final real ya calculado (Precio Base + su parte del IVA). Detecta la unidad (kg, gr, l, ml o u). Responde ÚNICAMENTE con un JSON válido con esta estructura estricta: { \"items\": [{ \"item\": \"Nombre del producto\", \"cantidad\": 1, \"costoTotalLote\": 1.68, \"unidad\": \"u\" }] }";
 
   const payload = {
     contents: [{
@@ -258,6 +258,7 @@ const extractInvoiceData = async (base64Data, mimeType) => {
     }
   }
 };
+
 
 
 const UnidadesSelect = ({ value, onChange, className }) => (

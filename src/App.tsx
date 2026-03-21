@@ -175,13 +175,12 @@ const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidad
 };
 
 const extractInvoiceData = async (base64Data, mimeType) => {
-  // === 1. EL INTERRUPTOR (AQUÍ SÍ VA TU LLAVE REAL) ===
-  const apiKey = "AIzaSyDTfkiuxVQXmVhAjrq5BvebX-SMY8zOk7s"; 
+  // === 1. EL INTERRUPTOR ===
+  // 🛑 ASEGÚRESE DE PEGAR SU NUEVA LLAVE AQUÍ DENTRO DE LAS COMILLAS
+  const apiKey = "AIzaSyD4vHvxWOld0yw1T74CD5eKruPNXb_0ZxE"; 
   
-  // === 2. LA ALARMA DE SEGURIDAD (Déjala así, con el texto falso) ===
-  if (!apiKey || apiKey === "TU_CLAVE_AQUI" || apiKey === "") {
-     alert("⚠️ Sistema: Por favor, coloca tu 'API Key' de Google en el código para encender el escáner.");
-     return null;
+  if (!apiKey || apiKey === "TU_NUEVA_LLAVE_AQUI" || apiKey === "" || apiKey === "AIzaSyB16ai7DleAY51Uz_eQeys9UmJEsMFZ7Kk") {
+     throw new Error("Llave API vacía o quemada. Actualice la variable apiKey.");
   }
 
   const payload = {
@@ -219,25 +218,37 @@ const extractInvoiceData = async (base64Data, mimeType) => {
     }
   };
 
-  const delays = [1000, 2000, 4000, 8000, 16000];
-  for (let i = 0; i < 5; i++) {
+  const delays = [1000, 2000, 4000]; // Reducido a 3 intentos para diagnóstico rápido
+  for (let i = 0; i < 3; i++) {
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      if (!response.ok) {
+        // === CAPTURA DE LA VERDAD ===
+        const errorObj = await response.json();
+        throw new Error(`Google IA rechazó la conexión: ${errorObj.error?.message || response.status}`);
+      }
+
       const data = await response.json();
       const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!textResponse) throw new Error("Respuesta vacía de la IA.");
-      return JSON.parse(textResponse);
+      
+      if (!textResponse) throw new Error("La IA de Google no devolvió ningún texto.");
+      
+      // Limpiador de formato por si Google envía un JSON sucio
+      const cleanText = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(cleanText);
+
     } catch (e) {
-      if (i === 4) throw e;
+      if (i === 2) throw e; // Si falla, explota y lanza el error a la pantalla
       await new Promise(res => setTimeout(res, delays[i]));
     }
   }
 };
+
 
 const UnidadesSelect = ({ value, onChange, className }) => (
   <select value={value} onChange={onChange} className={className}>
@@ -2413,10 +2424,15 @@ function InventarioModule({ user }) {
        try {
           const res = await extractInvoiceData(ev.target.result.split(',')[1], file.type);
           if (res?.items) setScannedItems(res.items);
-       } catch (err) { console.error(err); alert("Error de conexión IA."); }
+       } catch (err) { 
+          console.error(err); 
+          // === ALERTA FORENSE: Mostrará el error REAL en la pantalla ===
+          alert(`🚨 ERROR DETALLADO: ${err.message}`); 
+       }
        finally { setIsScanning(false); e.target.value = null; }
     };
   };
+
 
 
   const iniciarEdicion = (inv) => {

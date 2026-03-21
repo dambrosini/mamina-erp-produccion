@@ -176,7 +176,7 @@ const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidad
 
 const extractInvoiceData = async (base64Data, mimeType) => {
   // 🛑 PEGAR AQUÍ SU LLAVE NUEVA DENTRO DE LAS COMILLAS
-  const apiKey = "AIzaSyDoOwHqJcv5E6IpzbK8BkontNDlLXUSAoU"; 
+  const apiKey = "AIzaSyDuOSxV7D3bQ4BV76EeonvZRu6nJmnTfk8"; 
   
   if (!apiKey || apiKey === "TU_NUEVA_LLAVE_AQUI" || apiKey === "") {
      throw new Error("Llave API vacía. Actualice la variable apiKey.");
@@ -198,7 +198,7 @@ const extractInvoiceData = async (base64Data, mimeType) => {
      }
   } catch (err) { console.log("Auto-descubrimiento en caché."); }
 
-  // === 2. NUEVO PROMPT (SOLO EXTRACCIÓN CRUDA PARA EVITAR ALUCINACIONES) ===
+  // === 2. NUEVO PROMPT (INCLUYE REGLA DE CLASIFICACIÓN TIPO) ===
   const promptText = `Eres un auditor contable experto. Analiza esta factura de compras.
   REGLA ESTRICTA DE LECTURA (CERO ALUCINACIONES MATEMÁTICAS):
   1. Lee el 'Subtotal' (Suma de los productos sin impuestos).
@@ -207,6 +207,7 @@ const extractInvoiceData = async (base64Data, mimeType) => {
   4. Extrae TODOS y CADA UNO de los ítems comprados. No agrupes, lista cada fila.
   5. Para cada ítem, extrae su 'Precio Total Base' (el valor de esa línea SIN sumarle el IVA todavía).
   6. Detecta la unidad (kg, gr, l, ml o u).
+  7. Clasifica el 'tipo' del ítem ESTRICTAMENTE como "Materia Prima" (comida, ingredientes) o "Empaques" (cajas, domos, fundas, bases).
 
   Responde ÚNICAMENTE con un JSON numérico válido con esta estructura exacta:
   {
@@ -216,7 +217,7 @@ const extractInvoiceData = async (base64Data, mimeType) => {
        "totalFactura": 115.00
     },
     "items": [
-      { "item": "Nombre del producto", "cantidad": 1, "precioTotalBase": 10.00, "unidad": "kg" }
+      { "item": "Nombre del producto", "cantidad": 1, "precioTotalBase": 10.00, "unidad": "kg", "tipo": "Materia Prima" }
     ]
   }`;
 
@@ -250,16 +251,12 @@ const extractInvoiceData = async (base64Data, mimeType) => {
       const cleanText = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedData = JSON.parse(cleanText);
 
-      // === MOTOR DE PRORRATEO Y CUADRE DE CAJA (INFALIBLE) ===
+      // === MOTOR DE PRORRATEO Y CUADRE DE CAJA ===
       if (parsedData.totales && parsedData.items) {
          const { subtotal, totalFactura } = parsedData.totales;
-         
-         // Calculamos el peso real del impuesto en la factura (Factor multiplicador)
          const factorIva = (subtotal > 0 && totalFactura > 0) ? (totalFactura / subtotal) : 1;
-         
          let sumaCalculada = 0;
          
-         // JavaScript prorratea matemáticamente cada ítem
          const itemsProrrateados = parsedData.items.map(item => {
             const costoReal = item.precioTotalBase * factorIva;
             sumaCalculada += costoReal;
@@ -267,12 +264,11 @@ const extractInvoiceData = async (base64Data, mimeType) => {
                item: item.item,
                cantidad: item.cantidad,
                unidad: item.unidad,
+               tipo: item.tipo === "Empaques" ? "Empaques" : "Materia Prima", // La IA asigna el tipo
                costoTotalLote: parseFloat(costoReal.toFixed(2))
             };
          });
 
-         // CUADRE DE CAJA: Si los decimales nos juegan en contra por 1 o 2 centavos, 
-         // ajustamos el primer ítem forzosamente para que el total sume EXACTAMENTE igual a la factura.
          const diferencia = totalFactura - sumaCalculada;
          if (Math.abs(diferencia) > 0.001 && itemsProrrateados.length > 0) {
             itemsProrrateados[0].costoTotalLote = parseFloat((itemsProrrateados[0].costoTotalLote + diferencia).toFixed(2));
@@ -2443,7 +2439,7 @@ function InventarioModule({ user }) {
         if (existing) {
            await updateDocData(existing._docId, { stock: existing.stock + item.cantidad, costoTotal: (existing.costoTotal || 0) + item.costoTotalLote, estado: (existing.stock + item.cantidad) > 10 ? 'Óptimo' : 'Comprar' });
         } else {
-           await addDocData({ item: item.item, tipo: 'Materia Prima', stock: item.cantidad, unidad: item.unidad || 'u', costoTotal: item.costoTotalLote, tienda: 'Ingreso IA', estado: 'Óptimo' });
+          await addDocData({ item: item.item, tipo: item.tipo || 'Materia Prima', stock: item.cantidad, unidad: item.unidad || 'u', costoTotal: item.costoTotalLote, tienda: 'Ingreso IA', estado: 'Óptimo' });
         }
      }
      setScannedItems([]);
@@ -2510,7 +2506,7 @@ function InventarioModule({ user }) {
             <div className="overflow-x-auto w-full mb-4 border rounded-xl bg-white">
                <table className="w-full text-left text-sm min-w-[500px]">
                  <thead className="bg-stone-50 text-[10px] uppercase">
-                   <tr><th className="p-3">Ítem Identificado</th><th className="p-3 text-center">Cant</th><th className="p-3 text-center">Unidad</th><th className="p-3 text-right">Costo Lote (Inc. IVA)</th></tr>
+                 <tr><th className="p-3">Ítem Identificado</th><th className="p-3 text-center">Cant</th><th className="p-3 text-center">Unidad</th><th className="p-3 text-center">Tipo</th><th className="p-3 text-right">Costo Lote (Inc. IVA)</th></tr>
                  </thead>
                  <tbody>
                    {scannedItems.map((item, idx) => (
@@ -2518,6 +2514,20 @@ function InventarioModule({ user }) {
                        <td className="p-3 font-bold">{item.item}</td>
                        <td className="p-3 text-center font-medium">{item.cantidad}</td>
                        <td className="p-3 text-center"><span className="text-[10px] bg-[#FFF9F8] text-[#DF888A] px-2 rounded font-bold">{item.unidad}</span></td>
+                       <td className="p-3 text-center">
+                          <select 
+                             value={item.tipo || 'Materia Prima'} 
+                             onChange={(e) => {
+                                const nuevosItems = [...scannedItems];
+                                nuevosItems[idx].tipo = e.target.value;
+                                setScannedItems(nuevosItems);
+                             }}
+                             className="text-[10px] bg-white border border-stone-200 rounded p-1 outline-none text-[#4A2B29] font-bold cursor-pointer"
+                          >
+                             <option value="Materia Prima">Materia Prima</option>
+                             <option value="Empaques">Empaques</option>
+                          </select>
+                       </td>
                        <td className="p-3 text-right font-black text-[#4A2B29]">${parseFloat(item.costoTotalLote).toFixed(2)}</td>
                      </tr>
                    ))}

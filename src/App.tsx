@@ -175,75 +175,85 @@ const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidad
 };
 
 const extractInvoiceData = async (base64Data, mimeType) => {
-  // === 1. EL INTERRUPTOR ===
-  // 🛑 ASEGÚRESE DE PEGAR SU NUEVA LLAVE AQUÍ DENTRO DE LAS COMILLAS
-  const apiKey = "AIzaSyD4vHvxWOld0yw1T74CD5eKruPNXb_0ZxE"; 
+  // 🛑 PEGAR AQUÍ SU LLAVE NUEVA DENTRO DE LAS COMILLAS
+  const apiKey = "TU_NUEVA_LLAVE_AQUI"; 
   
-  if (!apiKey || apiKey === "TU_NUEVA_LLAVE_AQUI" || apiKey === "" || apiKey === "AIzaSyB16ai7DleAY51Uz_eQeys9UmJEsMFZ7Kk") {
-     throw new Error("Llave API vacía o quemada. Actualice la variable apiKey.");
+  if (!apiKey || apiKey === "TU_NUEVA_LLAVE_AQUI" || apiKey === "") {
+     throw new Error("Llave API vacía. Actualice la variable apiKey.");
   }
+
+  // === 1. ALGORITMO DE AUTO-DESCUBRIMIENTO (MODO DIOS) ===
+  // Le preguntamos a Google qué modelos existen para SU llave específica.
+  let targetModel = "models/gemini-1.5-flash"; 
+  try {
+     const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+     if (listRes.ok) {
+        const listData = await listRes.json();
+        const availableModels = listData.models || [];
+        
+        // Buscamos el primer modelo de la familia 1.5 autorizado
+        const bestModel = availableModels.find(m => 
+           m.name.includes("gemini-1.5") && 
+           m.supportedGenerationMethods?.includes("generateContent")
+        );
+        
+        if (bestModel) {
+           targetModel = bestModel.name; // Ej: se asignará solo a "models/gemini-1.5-flash-001"
+        } else if (availableModels.length > 0) {
+           // Fallback de seguridad extremo
+           const fallback = availableModels.find(m => m.supportedGenerationMethods?.includes("generateContent"));
+           if (fallback) targetModel = fallback.name;
+        }
+     }
+  } catch (err) {
+     console.log("Auto-descubrimiento en caché, usando default.");
+  }
+
+  // === 2. PAYLOAD UNIVERSAL (Anti-Fallos) ===
+  // Hemos blindado las instrucciones para que funcionen con cualquier modelo que Google elija.
+  const promptText = "Eres un experto auditor contable. Analiza esta factura de compras. Extrae la lista de todos los items comprados. Calcula el 'costoTotalLote' incluyendo el IVA si es que aplica. Detecta si la unidad es kg, gr, l, ml o u (unidades). Responde ÚNICAMENTE con un JSON válido con esta estructura estricta: { \"items\": [{ \"item\": \"Nombre del producto\", \"cantidad\": 1, \"costoTotalLote\": 1.50, \"unidad\": \"u\" }] }";
 
   const payload = {
     contents: [{
       role: "user",
       parts: [
-        { text: "Eres un experto auditor contable. Analiza esta factura de compras de Ecuador. Extrae la lista de todos los items comprados. Debes calcular el 'costoTotalLote' incluyendo el IVA si es que aplica (prorratea el IVA total entre los items si es necesario). El formato debe ser estrictamente un JSON. Detecta si la unidad parece ser kg, gr, l, ml o u (unidades)." },
+        { text: promptText },
         { inlineData: { mimeType: mimeType, data: base64Data } }
       ]
-    }],
-    systemInstruction: {
-      parts: [{ text: "Responde ÚNICAMENTE con un JSON válido. No uses markdown de código. Estructura: { items: [{ item: 'Nombre del producto', cantidad: 1, costoTotalLote: 1.50, unidad: 'u' }] }" }]
-    },
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "OBJECT",
-        properties: {
-          items: {
-            type: "ARRAY",
-            items: {
-              type: "OBJECT",
-              properties: {
-                item: { type: "STRING" },
-                cantidad: { type: "NUMBER" },
-                costoTotalLote: { type: "NUMBER" },
-                unidad: { type: "STRING" }
-              },
-              required: ["item", "cantidad", "costoTotalLote", "unidad"]
-            }
-          }
-        },
-        required: ["items"]
-      }
-    }
+    }]
   };
 
-  const delays = [1000, 2000, 4000]; // Reducido a 3 intentos para diagnóstico rápido
+  if (targetModel.includes("1.5") || targetModel.includes("2.0")) {
+     payload.generationConfig = { responseMimeType: "application/json" };
+  }
+
+  // === 3. LLAMADA FINAL Y EXTRACCIÓN ===
+  const delays = [1000, 2000, 4000];
   for (let i = 0; i < 3; i++) {
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`, {
+      // Usamos el modelo que Google nos autorizó dinámicamente
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
-        // === CAPTURA DE LA VERDAD ===
         const errorObj = await response.json();
-        throw new Error(`Google IA rechazó la conexión: ${errorObj.error?.message || response.status}`);
+        throw new Error(`Google IA rechazó (${targetModel}): ${errorObj.error?.message || response.status}`);
       }
 
       const data = await response.json();
       const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
       
-      if (!textResponse) throw new Error("La IA de Google no devolvió ningún texto.");
+      if (!textResponse) throw new Error("La IA no devolvió texto.");
       
-      // Limpiador de formato por si Google envía un JSON sucio
+      // Limpiador industrial de JSON
       const cleanText = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
       return JSON.parse(cleanText);
 
     } catch (e) {
-      if (i === 2) throw e; // Si falla, explota y lanza el error a la pantalla
+      if (i === 2) throw e;
       await new Promise(res => setTimeout(res, delays[i]));
     }
   }

@@ -176,62 +176,62 @@ const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidad
 
 const extractInvoiceData = async (base64Data, mimeType) => {
   // 🛑 PEGAR AQUÍ SU LLAVE NUEVA DENTRO DE LAS COMILLAS
-  const apiKey = "AIzaSyBJJNedZr8ZM8NqhVx-Pwr4Fx02iX-cWu4"; 
+  const apiKey = "TU_NUEVA_LLAVE_AQUI"; 
   
   if (!apiKey || apiKey === "TU_NUEVA_LLAVE_AQUI" || apiKey === "") {
      throw new Error("Llave API vacía. Actualice la variable apiKey.");
   }
 
-  // === 1. ALGORITMO DE AUTO-DESCUBRIMIENTO (MODO DIOS) ===
-  // Le preguntamos a Google qué modelos existen para SU llave específica.
+  // === 1. ALGORITMO DE AUTO-DESCUBRIMIENTO ===
   let targetModel = "models/gemini-1.5-flash"; 
   try {
      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
      if (listRes.ok) {
         const listData = await listRes.json();
         const availableModels = listData.models || [];
-        
-        // Buscamos el primer modelo de la familia 1.5 autorizado
-        const bestModel = availableModels.find(m => 
-           m.name.includes("gemini-1.5") && 
-           m.supportedGenerationMethods?.includes("generateContent")
-        );
-        
-        if (bestModel) {
-           targetModel = bestModel.name; // Ej: se asignará solo a "models/gemini-1.5-flash-001"
-        } else if (availableModels.length > 0) {
-           // Fallback de seguridad extremo
+        const bestModel = availableModels.find(m => m.name.includes("gemini-1.5") && m.supportedGenerationMethods?.includes("generateContent"));
+        if (bestModel) targetModel = bestModel.name; 
+        else if (availableModels.length > 0) {
            const fallback = availableModels.find(m => m.supportedGenerationMethods?.includes("generateContent"));
            if (fallback) targetModel = fallback.name;
         }
      }
-  } catch (err) {
-     console.log("Auto-descubrimiento en caché, usando default.");
-  }
+  } catch (err) { console.log("Auto-descubrimiento en caché."); }
 
-  // === 2. PAYLOAD UNIVERSAL (Anti-Fallos y Prorrateo IVA) ===
-  // Hemos blindado las instrucciones para forzar el cálculo matemático del IVA por producto.
-  const promptText = "Eres un auditor contable experto. Extrae los items de esta factura. REGLA ESTRICTA DE IMPUESTOS: Busca el Subtotal y el porcentaje de IVA total (ej. 15%) cobrado al final de la factura. DEBES prorratear este IVA matemáticamente y sumarlo al precio individual base de cada producto. El valor en 'costoTotalLote' que devuelvas DEBE ser el costo final real ya calculado (Precio Base + su parte del IVA). Detecta la unidad (kg, gr, l, ml o u). Responde ÚNICAMENTE con un JSON válido con esta estructura estricta: { \"items\": [{ \"item\": \"Nombre del producto\", \"cantidad\": 1, \"costoTotalLote\": 1.68, \"unidad\": \"u\" }] }";
+  // === 2. NUEVO PROMPT (SOLO EXTRACCIÓN CRUDA PARA EVITAR ALUCINACIONES) ===
+  const promptText = `Eres un auditor contable experto. Analiza esta factura de compras.
+  REGLA ESTRICTA DE LECTURA (CERO ALUCINACIONES MATEMÁTICAS):
+  1. Lee el 'Subtotal' (Suma de los productos sin impuestos).
+  2. Lee el valor del 'IVA' cobrado.
+  3. Lee el 'Total' Final a pagar de la factura.
+  4. Extrae TODOS y CADA UNO de los ítems comprados. No agrupes, lista cada fila.
+  5. Para cada ítem, extrae su 'Precio Total Base' (el valor de esa línea SIN sumarle el IVA todavía).
+  6. Detecta la unidad (kg, gr, l, ml o u).
+
+  Responde ÚNICAMENTE con un JSON numérico válido con esta estructura exacta:
+  {
+    "totales": {
+       "subtotal": 100.00,
+       "totalIva": 15.00,
+       "totalFactura": 115.00
+    },
+    "items": [
+      { "item": "Nombre del producto", "cantidad": 1, "precioTotalBase": 10.00, "unidad": "kg" }
+    ]
+  }`;
 
   const payload = {
-    contents: [{
-      role: "user",
-      parts: [
-        { text: promptText },
-        { inlineData: { mimeType: mimeType, data: base64Data } }
-      ]
-    }]
+    contents: [{ role: "user", parts: [{ text: promptText }, { inlineData: { mimeType: mimeType, data: base64Data } }] }]
   };
 
   if (targetModel.includes("1.5") || targetModel.includes("2.0")) {
      payload.generationConfig = { responseMimeType: "application/json" };
   }
 
-  // === 3. LLAMADA FINAL Y EXTRACCIÓN ===
+  // === 3. LLAMADA Y MOTOR MATEMÁTICO JAVASCRIPT ===
   const delays = [1000, 2000, 4000];
   for (let i = 0; i < 3; i++) {
     try {
-      // Usamos el modelo que Google nos autorizó dinámicamente
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -245,12 +245,43 @@ const extractInvoiceData = async (base64Data, mimeType) => {
 
       const data = await response.json();
       const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      
       if (!textResponse) throw new Error("La IA no devolvió texto.");
       
-      // Limpiador industrial de JSON
       const cleanText = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-      return JSON.parse(cleanText);
+      const parsedData = JSON.parse(cleanText);
+
+      // === MOTOR DE PRORRATEO Y CUADRE DE CAJA (INFALIBLE) ===
+      if (parsedData.totales && parsedData.items) {
+         const { subtotal, totalFactura } = parsedData.totales;
+         
+         // Calculamos el peso real del impuesto en la factura (Factor multiplicador)
+         const factorIva = (subtotal > 0 && totalFactura > 0) ? (totalFactura / subtotal) : 1;
+         
+         let sumaCalculada = 0;
+         
+         // JavaScript prorratea matemáticamente cada ítem
+         const itemsProrrateados = parsedData.items.map(item => {
+            const costoReal = item.precioTotalBase * factorIva;
+            sumaCalculada += costoReal;
+            return {
+               item: item.item,
+               cantidad: item.cantidad,
+               unidad: item.unidad,
+               costoTotalLote: parseFloat(costoReal.toFixed(2))
+            };
+         });
+
+         // CUADRE DE CAJA: Si los decimales nos juegan en contra por 1 o 2 centavos, 
+         // ajustamos el primer ítem forzosamente para que el total sume EXACTAMENTE igual a la factura.
+         const diferencia = totalFactura - sumaCalculada;
+         if (Math.abs(diferencia) > 0.001 && itemsProrrateados.length > 0) {
+            itemsProrrateados[0].costoTotalLote = parseFloat((itemsProrrateados[0].costoTotalLote + diferencia).toFixed(2));
+         }
+
+         return { items: itemsProrrateados };
+      }
+
+      return parsedData;
 
     } catch (e) {
       if (i === 2) throw e;
@@ -258,6 +289,7 @@ const extractInvoiceData = async (base64Data, mimeType) => {
     }
   }
 };
+
 
 
 

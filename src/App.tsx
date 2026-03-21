@@ -176,7 +176,7 @@ const calcularCostoConvertido = (costoTotalLote, stockLote, unidadLote, cantidad
 
 const extractInvoiceData = async (base64Data, mimeType) => {
   // 🛑 PEGAR AQUÍ SU LLAVE NUEVA DENTRO DE LAS COMILLAS
-  const apiKey = "TU_NUEVA_LLAVE_AQUI"; 
+  const apiKey = "AIzaSyDoOwHqJcv5E6IpzbK8BkontNDlLXUSAoU"; 
   
   if (!apiKey || apiKey === "TU_NUEVA_LLAVE_AQUI" || apiKey === "") {
      throw new Error("Llave API vacía. Actualice la variable apiKey.");
